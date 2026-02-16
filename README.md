@@ -93,7 +93,11 @@ gpt> attention "The capital of France is"
    Open attention.html in your browser to view!
 ```
 
-Opens an interactive HTML heatmap showing how each token attends to previous tokens. Hover over cells to see exact weights!
+Opens an interactive HTML heatmap showing how each token attends to previous tokens:
+
+![Attention Visualization](examples/attention_viz.png)
+
+Each cell shows the attention weight (%). Notice how "is" attends most to "The" (30%) and itself (29%), showing the model looking at both syntactic structure and self-attention patterns!
 
 ### Commands
 
