@@ -18,8 +18,8 @@ Rich REPL with command history, autocomplete, and colored output.
 
 ```bash
 # Clone and setup
-git clone https://github.com/YOUR_USERNAME/gpt-token-explorer.git
-cd gpt-token-explorer
+git clone https://github.com/chr1sbest/gpt_explorer.git
+cd gpt_explorer
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
