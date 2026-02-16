@@ -10,6 +10,7 @@ Interactive Python REPL for learning how GPT models generate text. Demonstrates 
 - **Complete** - See probability distributions for the next token
 - **Generate** - Watch autoregressive generation unfold token-by-token
 - **Tokenize** - Understand how text splits into BPE subword tokens
+- **Attention** - Interactive HTML heatmaps showing transformer attention weights
 - **Model Comparison** - Compare SmolLM (fast) vs Qwen (quality)
 
 Rich REPL with command history, autocomplete, and colored output.
@@ -80,6 +81,20 @@ gpt> tokenize "ChatGPT is amazing!"
    Note: Spaces become part of tokens with BPE
 ```
 
+**Visualize attention weights:**
+```
+gpt> attention "The capital of France is"
+
+   ✓ Attention visualization exported!
+   File: attention.html
+   Tokens: 5
+   Layer: 30, Head: 1
+
+   Open attention.html in your browser to view!
+```
+
+Opens an interactive HTML heatmap showing how each token attends to previous tokens. Hover over cells to see exact weights!
+
 ### Commands
 
 | Command | Description | Example |
@@ -87,6 +102,7 @@ gpt> tokenize "ChatGPT is amazing!"
 | `complete <text>` | Show next token probabilities | `complete "Hello world"` |
 | `generate <text> [n]` | Generate n tokens step-by-step | `generate "Once upon a time" 10` |
 | `tokenize <text>` | Break text into BPE tokens | `tokenize "Hello!"` |
+| `attention <text> [file]` | Export attention heatmap to HTML | `attention "Hello world"` |
 | `help` | Show all commands | |
 | `quit` | Exit | |
 

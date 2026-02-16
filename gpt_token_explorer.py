@@ -60,7 +60,8 @@ class ModelManager:
                 self.model_name,
                 torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 device_map="auto" if torch.cuda.is_available() else None,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
+                attn_implementation='eager'  # Required for attention visualization
             )
             self.model.eval()  # Set to evaluation mode
 
@@ -274,6 +275,228 @@ class CommandHandler:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def attention(self, text, layer=-1, head=0, output_file="attention.html"):
+        """Extract attention weights and export to HTML
+
+        Args:
+            text: Input text prompt
+            layer: Which layer to visualize (-1 for last layer)
+            head: Which attention head to visualize (0-indexed)
+            output_file: Output HTML file path
+
+        Returns:
+            dict with success, tokens, attention_weights, and output_file
+        """
+        valid, error = self.validate_input(text)
+        if not valid:
+            return {"success": False, "error": error}
+
+        try:
+            # Tokenize input
+            input_ids = self.model_manager.tokenizer.encode(
+                text,
+                return_tensors='pt'
+            ).to(self.model_manager.model.device)
+
+            # Get tokens
+            tokens = [self.model_manager.tokenizer.decode([t]) for t in input_ids[0]]
+
+            # Get model output with attention
+            with torch.no_grad():
+                outputs = self.model_manager.model(input_ids, output_attentions=True)
+
+            # Extract attention weights
+            attentions = outputs.attentions  # Tuple of (batch, heads, seq_len, seq_len)
+
+            # Get specified layer and head
+            layer_attention = attentions[layer]  # (batch, heads, seq_len, seq_len)
+            head_attention = layer_attention[0, head].cpu().numpy()  # (seq_len, seq_len)
+
+            # Create HTML visualization
+            html_content = self._create_attention_html(
+                tokens,
+                head_attention,
+                layer=len(attentions) + layer if layer < 0 else layer,
+                head=head,
+                text=text
+            )
+
+            # Write to file
+            with open(output_file, 'w') as f:
+                f.write(html_content)
+
+            return {
+                "success": True,
+                "tokens": tokens,
+                "attention_weights": head_attention.tolist(),
+                "layer": len(attentions) + layer if layer < 0 else layer,
+                "head": head,
+                "output_file": output_file
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _create_attention_html(self, tokens, attention_matrix, layer, head, text):
+        """Create interactive HTML visualization of attention weights"""
+        import json
+
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Attention Visualization - "{text}"</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }}
+        h1 {{
+            color: #333;
+            text-align: center;
+        }}
+        .info {{
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }}
+        .heatmap {{
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }}
+        table {{
+            border-collapse: collapse;
+            margin: 0 auto;
+        }}
+        th, td {{
+            padding: 8px 12px;
+            text-align: center;
+            border: 1px solid #ddd;
+            min-width: 60px;
+        }}
+        th {{
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }}
+        .token-cell {{
+            font-family: 'Courier New', monospace;
+            font-weight: 500;
+            background: #f8f9fa;
+            text-align: left;
+        }}
+        .attention-cell {{
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .attention-cell:hover {{
+            transform: scale(1.1);
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+            z-index: 10;
+        }}
+        .legend {{
+            margin-top: 20px;
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+        }}
+        .legend-bar {{
+            display: inline-block;
+            width: 300px;
+            height: 20px;
+            background: linear-gradient(to right,
+                rgb(255, 255, 255),
+                rgb(255, 200, 200),
+                rgb(255, 100, 100),
+                rgb(200, 0, 0)
+            );
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin: 0 10px;
+            vertical-align: middle;
+        }}
+    </style>
+</head>
+<body>
+    <h1>🔍 Attention Visualization</h1>
+    <div class="info">
+        <strong>Input:</strong> "{text}"<br>
+        <strong>Layer {layer + 1}</strong> (of {layer + 1}), <strong>Head {head + 1}</strong><br>
+        Hover over cells to see exact weights
+    </div>
+
+    <div class="heatmap">
+        <table id="attention-table">
+            <thead>
+                <tr>
+                    <th>Token ↓ attends to →</th>
+                    {''.join(f'<th>{token}</th>' for token in tokens)}
+                </tr>
+            </thead>
+            <tbody id="attention-body">
+            </tbody>
+        </table>
+    </div>
+
+    <div class="legend">
+        <span>Low attention</span>
+        <span class="legend-bar"></span>
+        <span>High attention</span>
+    </div>
+
+    <script>
+        const tokens = {json.dumps(tokens)};
+        const attentionWeights = {json.dumps(attention_matrix.tolist())};
+
+        function getColor(weight) {{
+            const r = Math.floor(255);
+            const g = Math.floor(255 * (1 - weight));
+            const b = Math.floor(255 * (1 - weight));
+            return `rgb(${{r}}, ${{g}}, ${{b}})`;
+        }}
+
+        const tbody = document.getElementById('attention-body');
+
+        tokens.forEach((token, i) => {{
+            const row = document.createElement('tr');
+
+            // Token label
+            const tokenCell = document.createElement('td');
+            tokenCell.className = 'token-cell';
+            tokenCell.textContent = token;
+            row.appendChild(tokenCell);
+
+            // Attention weights
+            tokens.forEach((_, j) => {{
+                const cell = document.createElement('td');
+                cell.className = 'attention-cell';
+
+                if (j <= i) {{  // Causal mask - only show attention to previous tokens
+                    const weight = attentionWeights[i][j];
+                    cell.style.backgroundColor = getColor(weight);
+                    cell.title = `${{token}} → ${{tokens[j]}}: ${{(weight * 100).toFixed(1)}}%`;
+                    cell.textContent = (weight * 100).toFixed(0) + '%';
+                }} else {{
+                    cell.style.backgroundColor = '#f0f0f0';
+                    cell.textContent = '-';
+                }}
+
+                row.appendChild(cell);
+            }});
+
+            tbody.appendChild(row);
+        }});
+    </script>
+</body>
+</html>"""
+        return html
+
 class OutputFormatter:
     """Formats command results for terminal display"""
 
@@ -400,10 +623,24 @@ class OutputFormatter:
         lines.append(f"   {OutputFormatter.BOLD}Final:{OutputFormatter.RESET} \"{result['final_text']}\"\n")
         return "\n".join(lines)
 
+    @staticmethod
+    def format_attention(result):
+        """Format attention command results"""
+        if not result["success"]:
+            return f"{OutputFormatter.RED}✗ {result['error']}{OutputFormatter.RESET}"
+
+        lines = [f"\n{OutputFormatter.GREEN}✓ Attention visualization exported!{OutputFormatter.RESET}\n"]
+        lines.append(f"   File: {OutputFormatter.BLUE}{result['output_file']}{OutputFormatter.RESET}")
+        lines.append(f"   Tokens: {len(result['tokens'])}")
+        lines.append(f"   Layer: {result['layer']}, Head: {result['head'] + 1}")
+        lines.append(f"\n   {OutputFormatter.BOLD}Open {result['output_file']} in your browser to view!{OutputFormatter.RESET}\n")
+
+        return "\n".join(lines)
+
 class TokenREPL:
     """Interactive REPL for GPT token exploration"""
 
-    COMMANDS = ['complete', 'generate', 'tokenize', 'help', 'quit', 'exit']
+    COMMANDS = ['complete', 'generate', 'tokenize', 'attention', 'help', 'quit', 'exit']
 
     def __init__(self, model_name=None):
         self.model_manager = None
@@ -484,6 +721,11 @@ class TokenREPL:
       Break text into tokens with IDs
       Example: tokenize "ChatGPT is amazing!"
 
+  {OutputFormatter.BLUE}attention{OutputFormatter.RESET} <text> [filename]
+      Export attention heatmap to HTML (default: attention.html)
+      Example: attention "The capital of France is"
+      Example: attention "Hello world" my_viz.html
+
   {OutputFormatter.BLUE}help{OutputFormatter.RESET}
       Show this help message
 
@@ -533,6 +775,27 @@ class TokenREPL:
             text = ' '.join(parts[1:])
             result = self.command_handler.tokenize(text)
             print(self.formatter.format_tokenize(result))
+
+        elif cmd == 'attention':
+            if len(parts) < 2:
+                print(f"{OutputFormatter.RED}Usage: attention <text> [filename]{OutputFormatter.RESET}")
+                return
+
+            # Check if last part is a filename
+            if len(parts) >= 3 and parts[-1].endswith('.html'):
+                text = ' '.join(parts[1:-1])
+                filename = parts[-1]
+            else:
+                text = ' '.join(parts[1:])
+                filename = "attention.html"
+
+            # Strip trailing spaces (BPE tokenization quirk)
+            if text.endswith(' '):
+                print(f"{OutputFormatter.YELLOW}Note: Stripped trailing space (affects tokenization){OutputFormatter.RESET}")
+                text = text.rstrip()
+
+            result = self.command_handler.attention(text, output_file=filename)
+            print(self.formatter.format_attention(result))
 
         elif cmd == 'generate':
             if len(parts) < 2:

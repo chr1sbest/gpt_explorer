@@ -50,3 +50,4 @@ htmlcov/
 .beads/
 .claude/
 venv_arm64/
+attention*.html
